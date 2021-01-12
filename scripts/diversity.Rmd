@@ -1,0 +1,382 @@
+---
+title: "Analysis of microbiome diversity"
+author: "Lucas Moitinho-Silva (l.silva@ikmb.uni-kiel.de), Malte Rühlemann (m.ruehlemann@ikmb.uni-kiel.de)"
+date: "12/14/2020"
+output:
+  rmarkdown::html_document:
+  theme: cerulean
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.height = 6,
+                      fig.width = 9, warning = F)
+```
+# Objective
+
+Here, We want to inspect the microbiome profiles of healthy people (Control - CNTRL) and people with inflammatory bowel disease (IBD) and compare them. Ultimately, we want to answer if the microbiome of people with IBD is different from the microbiome of healthy people.
+
+# Set work directory
+
+# Use the path that your folder scripts are on.
+```{r}
+getwd()# This tells you where you are, you are expected to be in the scripts folder. If not, you can set the working directory using a similar command as the commented line below.
+#setwd("~/IKMB/projects/random/Microbiome.tutorial.2020/scripts")
+
+```
+
+
+# Load necessary libraries
+
+```{r, message = F}
+library(tidyverse) # Use of pipe and lots of functions for a better R coding
+library(phyloseq) # Because we are going to work with microbioe data using phyloseq object
+library(vegan) # Many ecology related functions
+library(microbiome) # some useful functions
+library(DESeq2) # Test with negative binomial models
+```
+
+# Import and format the data
+
+Data was produced by DADA2, as we have done in the the first part of the workshop
+
+## Import sample information
+```{r}
+path <-  "../data_processed/"
+samples <-
+  read_tsv(paste0(path,"samples.txt"), col_names = F)
+head(samples)
+```
+As we can see, we have 3 columns. X1 is for the library ID, X2 is the condition and X3 is for the sample ID. Let's rename the columns.
+```{r}
+colnames(samples) <-
+  c("ID", "Condition", "Sample")
+head(samples)
+```
+## Import tax information
+
+```{r}
+tax <-
+  read.delim(paste0(path,"tax_tables.tsv"), sep = "\t") 
+head(tax,1)
+```
+Looks alright. Note that the row names (which is not a column of the data table - it does not have a header name) is an ASV.
+
+## Import ASV table
+
+I will call it micro, short for microbiome information.
+
+```{r}
+micro <-
+  readRDS(paste0(path, "seqtab.Rds"))
+head(micro[1:4,1:2])
+```
+
+Each ASV represents a column of the ASV table. Samples represent row names. Is it the same order as in the taxonomy table?
+
+```{r}
+identical(tax %>% rownames(), micro %>% colnames()) # This is the same as identical(rownames(tax), colnames(micro))
+```
+
+> Here I am using [pipe](https://cran.r-project.org/web/packages/magrittr/vignettes/magrittr.html) from magrittr package. It is much easier to code with it. "(With it, you) ... may pipe a value forward into an expression or function call; something along the lines of **x %>% f**, rather than **f(x)**."
+
+Now, is the sample order in the ASV table the same as in the samples table?
+
+```{r}
+identical(micro %>% rownames(), samples %>% pull(Sample))
+```
+It is!
+
+# Make phyloseq object
+
+Now, we need to combine the 3 data frames into a single object from the package [phyloseq](https://joey711.github.io/phyloseq/). This is a a S4 object. The idea is that it bundles this data set and format it in a way that makes easier to work with them.
+
+```{r}
+# Prepare data
+
+tax.ps <-
+  tax_table(tax %>% as.matrix())
+
+micro.ps <-
+  otu_table(micro, taxa_are_rows = F)
+
+rownames(samples) <-
+  samples %>% pull(Sample)
+
+samples.ps <-
+  sample_data(samples %>% data.frame())
+
+# Combine data into a single object
+
+ps <-
+  phyloseq(tax_table(tax.ps),  
+           otu_table(micro.ps, taxa_are_rows = F),
+           sample_data(samples.ps))
+```
+
+## The phyloseq object
+
+```{r}
+ps
+```
+
+>**TASK**
+Try to use the functions **otu_table()**, **sample_data()** and **tax_table()** to access different components of the phyloseq object
+
+# Analysis
+
+## How much did we sequence of each sample?
+
+```{r}
+counts <-
+  ps %>% 
+  otu_table() %>%
+  data.frame() %>% 
+  rowSums()
+counts
+```
+
+To have it a bit nicer, let's use pipes and ggplot2 to visualize this
+
+```{r}
+to.plot <-
+  counts %>% 
+  data.frame(counts = ., Sample = names(.))
+
+ggplot(to.plot, aes(x = Sample, y = counts)) +
+  geom_col() +
+  geom_hline(yintercept = 10000) + # add horizontal line 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) # flip the axis names
+
+```
+
+> **Tip**
+To understand better what is going on, try to run each line removing the "%>%"   
+
+
+**What do you say about the number of sequences? Did we sequence enough?**
+
+## Alpha diversity
+
+Alpha diversity is the diversity of a single ecological community - in our case, a microbiome sample. 
+
+### Visualization
+
+Phyloseq offers a function to plot several alpha diversity metrics. Let's use it.
+
+```{r}
+plot_richness(ps) 
+```
+
+First, you will notice that there are many ways to **understand** alpha diversity. Each metric offers one perspective of it. Some represent **richness** (observed ASVs, Chao1, ACE), others interpret alpha diversity also taking into account the **evenness** (e.g. Shannon and Simpson).
+
+Looking at data like that, it does not tell us much about our main question: **Is there a difference between conditions, CNTRL?** Let's see what the function does, so we can improve our visualization.
+
+```{r}
+?plot_richness
+```
+
+We can see that the function uses another function estimate richness, which we will use to make a graph bit fancier, with just one metric: **Shannon**.
+
+```{r}
+rich <-
+  ps %>% 
+  rarefy_even_depth() %>% # let's rarefy the data to make sure that sequencing depth is similar for all samples
+  estimate_richness(measures = "Shannon") %>% # get alpha diversity
+  rownames_to_column("Sample") %>% #format
+  left_join(sample_data(ps) %>% data.frame(), by = "Sample") # here I am combining the output of estimate richness with the sample data of the phyloseq object. I need to transform it to data.frame first
+
+# Check output
+rich %>% head()
+
+#Fancy plot
+ggplot(rich, aes(x = Condition, y = Shannon)) +
+  geom_boxplot() +
+  geom_jitter()
+
+```
+
+>**TIP/TASK**
+Look at this [page](http://www.sthda.com/english/wiki/ggplot2-colors-how-to-change-colors-automatically-and-manually) and see if you can change the color of the points or boxplots. 
+
+
+>**Caution note**: There is a lof of discussion in the field about whether rarefaction is the best transformation method to account for different sequencing depth. For simplicity, I included it here just to remind you that you have to control for it somehow. For further discussion, you can dig into this [paper](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1003531) from the authors of phyloseq on the theme.
+
+**But, is this significant?**
+
+### Statiscal testing
+
+Let's apply the non-parametric statistical test Wilcoxon signed-rank test to see if the groups' mean ranks differ.
+
+```{r}
+rich %>% 
+  arrange(Condition) %>% 
+  wilcox.test(Shannon ~ Condition, data = .)
+```
+
+
+**So, what you can tell me about the effect of IBD on diversity? What it means to have a less diverse microbiome?**
+
+## Beta diversity
+
+Beta diversity is the measure of diversity between two ecological communities.
+
+### Visualization
+
+A way to visualize beta-diversity (distance/similarity/**dissimilarity**) between microbiome samples is to reduce data into few, preferably two, dimensions. Such a technique, used mainly for data exploration, is called ordination. Phyloseq has two functions that are very useful to perform and visualize ordination. Let's use them to calculate **Bray-Curtis** dissimilarities between samples and then use **non-metric multidimensional scaling** to ordinate the dissimilarities.
+
+
+```{r}
+ps.ord <-
+  ps %>% 
+  rarefy_even_depth() %>% # let's rarefy the data to make sure that sequencing depth is similar for all samples
+  ordinate("NMDS", "bray")
+p1 = plot_ordination(ps, ps.ord, type="samples", color="Condition")
+print(p1)
+```
+
+
+Quite a strong separation, right? 
+
+
+> **TASK**
+Check the different way/metrics to ordinate and plot them, and see if the results changes. To check what is on the menu type: *?ordinate()* for checking different ordinations and *?distance()* for checking different distances"
+
+
+**But is this significant?**
+
+### Statistical testing
+
+To test whether the centroids (Location) and dispersion varies between groups, we will use **PERMANOVA** (Permutational Multivariate Analysis of Variance Using Distance Matrices). This approach basically looks if the points assigned to different groups are more similar to another, than they are to the points of the other group. Additionally, it uses random permutations of the data to check if this is also true when the samples are assigned to clusters randomly. By doing this many times, the test assigns a kind of P-Value (actually an F-Score) to the result, indicating how many times the random assignment into groups fitted better than the original clusters.
+
+```{r}
+micro.dis <-
+  ps %>% 
+  rarefy_even_depth() %>% # let's rarefy the data to make sure that sequencing depth is similar for all samples
+  phyloseq::distance("bray")
+
+adonis(micro.dis ~ Condition, data = ps %>% sample_data() %>% data.frame())
+```
+
+Yes, groups have different beta diversity.
+
+**What you can tell me about the effect of IBD on diversity? What it means to observe a difference in beta diversity in comparison with alpha diversity?**
+
+
+Our, next very question would be: *Which bacteria are driving the low diversity and such a different community composition?*
+
+## Taxonomy
+
+Here, we are going to look at the microbiome at the taxonomical perspective. To remember: we produced amplicon variant sequences (ASVs) using DADA2 and these were classified into different taxonomic levels.
+
+
+![](../figures/Taxonomic_Rank_Graph.png)
+Taoxnomic levels. Author: Annina Breen.
+
+So, lets have a look at the taxonomic composition of the stool microbiome
+
+### Visualization
+
+Phyloseq offers a function to plot the taxonomic composition.
+```{r}
+plot_bar(ps, x="Sample", fill="Phylum") +
+  facet_wrap(~ Condition, scales = "free") # divide the plot into two facets
+```
+
+We see that samples have different sequence counts. Each ASV is a subdivision of the plot. Nevertheless, we can have already an idea of what is happening. There seems to be more Proteobacteria/Verrucomicrobia on samples from IBD patients. Not sure now.
+
+**How can we improve here?**
+
+```{r}
+ps %>% aggregate_taxa(level = "Phylum") %>% # aggregate all ASVs into the level phyloum
+  rarefy_even_depth() %>% # make all samples with the same sequencing depth using rarefaction
+  plot_bar(x="Sample", fill="Phylum") + 
+  facet_wrap(~ Condition, scales = "free")
+```
+
+Better, right? We can see that Proteobacteria seems to be over represented in IBD patients in comparison with healthy controls. How about Genus?
+
+```{r}
+ps %>% microbiome::aggregate_top_taxa(top = 10, level = "Genus") %>% # Here we used the function from the package microbiome to reduce the number of taxa to the top 10. The rest is lumped into the category "other"
+  rarefy_even_depth() %>% 
+  plot_bar(x="Sample", fill="Genus") +
+  facet_wrap(~ Condition, scales = "free")
+```
+
+Aha! Here we see that the genera Bacteroides and Prevotela seem to be drastically different between the groups.
+
+>**TASK**
+Try with other levels. If you do know which levels there are: check  the columns of tax_table(ps)@.Data using the function colnames()
+
+**But is this significant?**
+
+### Statistical testing 
+
+We will use DESeq2 package to apply **generalized linear model with negative binomial distribution** to bacteria abundances - in our case here, genus. Within DESeq2, we will apply **Wald test** to see whether the abundance of genera differs between the groups control and IBD. DESeq2 includes a internal calculation for library size to account for different sequencing depths and also performs P value adjustments for multiple tests.
+
+First, we need to format the data by combining all ASV counts into the genus level.
+
+```{r}
+ps.to.dseq <-
+  ps %>%
+  aggregate_taxa(level = "Genus")
+```
+
+Now, let us do the DESeq2 routine
+
+
+```{r}
+
+# Create DESeq2 object from 
+dseq <-
+  ps.to.dseq %>% 
+  phyloseq_to_deseq2(design = ~ Condition)
+
+# Perform test. There is a lot going under the hood here, including: estimation of size factors, estimation of dispersion, and Negative Binomial GLM fitting and Wald statistics.
+res <-
+  DESeq(dseq)
+
+res %>% colData %>% head()
+
+# Extract the result table
+res.df <-
+  res %>% 
+  results(tidy = T)
+
+#Visualize what we got out of it
+res.df %>% head()
+```
+
+That's it! You can have a look at the res.df table and you will find the results of all the genus tested. Depending on your question, you can perform similar analysis to all levels, from phylum to ASV (subspecies level). 
+
+So, to finish, let's format this table and visualize the data using ggplot2.
+
+```{r}
+# Filter and format to plot
+res.df.to.plot <-
+  res.df %>% 
+  filter(padj < 0.05) %>% # keep only results with adjusted P value less than 0.05
+  mutate(Genus = row) %>% # Create Genus column
+  left_join(tax_table(ps.to.dseq )@.Data %>% data.frame(), by = "Genus") %>% # Add taxonomy information from the phyloseq object.
+  # Arrange the data for a prettier plot
+  arrange(log2FoldChange) %>% 
+  mutate(Genus = factor(Genus, levels = Genus %>% unique()))
+
+head(res.df.to.plot)
+
+
+#Plot
+
+ggplot(res.df.to.plot, aes(x = log2FoldChange, y = Genus)) +
+  geom_jitter(aes(col = Phylum, size = baseMean))  +
+  geom_vline(xintercept = 0)
+```
+
+Here, we see that two abundant genera, Bacteroides and Prevotella are deferentially abundant between the groups. We see more Bacteroides in IBD patients and more Prevotella in controls. Many other genera were also differently abundant. 
+
+# Session information
+```{r}
+sessionInfo()
+```
+
