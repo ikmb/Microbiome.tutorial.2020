@@ -223,7 +223,7 @@ To make things a little easier, we will concentrate only on one sample for the t
 ```{r}
 seqtab.mock <- seqtab.nochim["ZyMOCK",seqtab.nochim["ZyMOCK",]>0, drop=F]
 
-tax.mock <- data.frame(assignTaxonomy(seqtab.mock, "../data/rdp_train_set_16.fa.gz", multithread=4))
+tax.mock <- data.frame(assignTaxonomy(seqtab.mock, "../taxonomy_db/rdp_train_set_16.fa.gz", multithread=4))
 
 colnames(tax.mock) <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus")
 
@@ -234,7 +234,7 @@ rownames(tax.mock) <- colnames(seqtab.mock) <- paste0("ASV_",  sprintf("%03d", 1
 dim(tax.mock)
 ```
 
-The `assignTaxonomy()` function is a wrapper for a so-called "Bayesian Classifier". In brief, this classifier chops the ASV sequences into smaller parts and compares them to the database of sequences with know names (in our case the RDP Training Set 16). By doing this many times, the classifier can estimate the confidence of the assignment. If an assignment on Genus-level is possible, this means that in this database there is a known sequence which is likely coming from the same Genus as the sequence under investigation. It is also possible that the Genus-level annotation is not clear, maybe because the respective Genus is missing from the database, or the resolution of the chosen amplicon is not good enough to disentagle which Genus-level member of e.g. a bacterial family the sequence comes from. Let's have a look:
+The `assignTaxonomy()` function is a wrapper for a so-called "Bayesian Classifier". In brief, this classifier chops the ASV sequences into smaller parts and compares them to the database of sequences with know names (in our case the RDP Training Set 16). By doing this many times, the classifier can estimate the confidence of the assignment. If an assignment on Genus-level is possible, this means that in this database there is a known sequence which is likely coming from the same Genus as the sequence under investigation. It is also possible that the Genus-level annotation is not clear, maybe because the respective Genus is missing from the database, or the resolution of the chosen amplicon is not good enough to disentangle which Genus-level member of e.g. a bacterial family the sequence comes from. Let's have a look:
 
 ```{r}
 print(tax.mock[is.na(tax.mock[,"Genus"]),])
