@@ -22,8 +22,7 @@ Here, We want to inspect the microbiome profiles of healthy people (Control - CN
 # Use the path that your folder scripts are on.
 ```{r}
 getwd()# This tells you where you are, you are expected to be in the scripts folder. If not, you can set the working directory using a similar command as the commented line below.
-#setwd("~/IKMB/projects/random/Microbiome.tutorial.2020/scripts")
-
+#setwd("~/Desktop/microbiome/Microbiome.tutorial.2020-main/scripts")
 ```
 
 
