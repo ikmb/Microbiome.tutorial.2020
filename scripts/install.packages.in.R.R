@@ -4,7 +4,7 @@ install.packages("tidyverse")
 #
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
-BiocManager::install("dada2", version = "3.11")
+BiocManager::install("dada2")
 #
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
